@@ -1,5 +1,0 @@
-# Postgresql Configuration
-spring.datasource.url=jdbc:postgresql://localhost:5432/notificationdb
-spring.datasource.username=${DB_USERNAME}
-spring.datasource.password=${DB_PASSWORD}
-spring.datasource.driver-class-name=org.postgresql.Driver
