@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import lombok.Getter;
@@ -41,6 +42,11 @@ public class Template extends BaseEntity {
 
     @Column(name = "updated_at", nullable = false)
     private java.time.OffsetDateTime updatedAt;
+
+    @PrePersist
+    protected void onTemplateCreate() {
+        this.updatedAt = java.time.OffsetDateTime.now();
+    }
 
     @PreUpdate
     protected void onUpdate() {
