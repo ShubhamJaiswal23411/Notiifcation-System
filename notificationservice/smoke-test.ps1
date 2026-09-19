@@ -140,6 +140,92 @@ Test-Step "List templates" {
     Invoke-RestMethod -Uri "$BaseUrl/api/templates" -Method Get -Headers $tenantHeaders
 } | Out-Null
 
+Write-Host "`n=== 6. NOTIFICATIONS (send, dispatch, idempotency, scheduling) ===" -ForegroundColor Cyan
+
+# Poll a notification until it reaches a terminal-ish status or times out
+function Wait-ForStatus {
+    param(
+        [string]$NotificationId,
+        [int]$TimeoutSeconds = 25,
+        [int]$PollEverySeconds = 3
+    )
+    $elapsed = 0
+    do {
+        Start-Sleep -Seconds $PollEverySeconds
+        $elapsed += $PollEverySeconds
+        $current = Invoke-RestMethod -Uri "$BaseUrl/api/notifications/$NotificationId" -Method Get -Headers $tenantHeaders
+        Write-Host "    [$elapsed s] status: $($current.status), attempts: $($current.attemptCount)"
+    } while ($current.status -in @("QUEUED", "SENDING", "SCHEDULED") -and $elapsed -lt $TimeoutSeconds)
+    return $current
+}
+
+$emailTemplateId = $template.id
+
+$sent = Test-Step "Send immediate notification" {
+    Invoke-RestMethod -Uri "$BaseUrl/api/notifications" -Method Post -Headers $tenantHeaders `
+        -ContentType "application/json" `
+        -Body "{`"channelType`":`"EMAIL`",`"templateId`":$emailTemplateId,`"recipient`":`"customer@example.com`",`"variables`":{`"name`":`"Alex`",`"orderId`":`"1001`",`"eta`":`"Friday`"}}"
+}
+Write-Host "  Notification ID: $($sent.id), initial status: $($sent.status)"
+
+Write-Host "  Polling for dispatch result (up to 25s)..."
+$final = Wait-ForStatus -NotificationId $sent.id
+if ($final.status -in @("SENT", "FAILED", "DEAD_LETTER")) {
+    Write-Host "[PASS] Immediate notification reached a dispatch outcome: $($final.status)" -ForegroundColor Green
+    $Pass++
+} else {
+    Write-Host "[FAIL] Immediate notification never left $($final.status) within timeout - check sweeper/executor" -ForegroundColor Red
+    $Fail++
+}
+
+$idempotencyKey = "idem-test-$Suffix"
+
+$firstSend = Test-Step "Send with explicit idempotency key" {
+    Invoke-RestMethod -Uri "$BaseUrl/api/notifications" -Method Post -Headers $tenantHeaders `
+        -ContentType "application/json" `
+        -Body "{`"channelType`":`"EMAIL`",`"templateId`":$emailTemplateId,`"recipient`":`"dup@example.com`",`"variables`":{`"name`":`"Sam`",`"orderId`":`"2002`",`"eta`":`"Monday`"},`"idempotencyKey`":`"$idempotencyKey`"}"
+}
+
+$secondSend = Test-Step "Re-send with SAME idempotency key" {
+    Invoke-RestMethod -Uri "$BaseUrl/api/notifications" -Method Post -Headers $tenantHeaders `
+        -ContentType "application/json" `
+        -Body "{`"channelType`":`"EMAIL`",`"templateId`":$emailTemplateId,`"recipient`":`"dup@example.com`",`"variables`":{`"name`":`"Sam`",`"orderId`":`"2002`",`"eta`":`"Monday`"},`"idempotencyKey`":`"$idempotencyKey`"}"
+}
+
+if ($firstSend.id -eq $secondSend.id) {
+    Write-Host "[PASS] Duplicate idempotency key returned the SAME notification (id $($firstSend.id)), no double-send" -ForegroundColor Green
+    $Pass++
+} else {
+    Write-Host "[FAIL] Duplicate idempotency key created a NEW notification (ids $($firstSend.id) vs $($secondSend.id)) - idempotency broken" -ForegroundColor Red
+    $Fail++
+}
+
+$scheduledTime = (Get-Date).ToUniversalTime().AddSeconds(35).ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+
+$scheduled = Test-Step "Send FUTURE-scheduled notification" {
+    Invoke-RestMethod -Uri "$BaseUrl/api/notifications" -Method Post -Headers $tenantHeaders `
+        -ContentType "application/json" `
+        -Body "{`"channelType`":`"EMAIL`",`"templateId`":$emailTemplateId,`"recipient`":`"later@example.com`",`"variables`":{`"name`":`"Jordan`",`"orderId`":`"3003`",`"eta`":`"Tuesday`"},`"scheduledAt`":`"$scheduledTime`"}"
+}
+
+if ($scheduled.status -eq "SCHEDULED") {
+    Write-Host "[PASS] Future-dated notification correctly created as SCHEDULED (not dispatched immediately)" -ForegroundColor Green
+    $Pass++
+} else {
+    Write-Host "[FAIL] Expected status SCHEDULED, got $($scheduled.status)" -ForegroundColor Red
+    $Fail++
+}
+
+Write-Host "  Waiting ~40s for the sweeper (runs every 30s) to pick up the scheduled send..."
+$scheduledFinal = Wait-ForStatus -NotificationId $scheduled.id -TimeoutSeconds 45 -PollEverySeconds 5
+if ($scheduledFinal.status -in @("SENT", "FAILED", "DEAD_LETTER")) {
+    Write-Host "[PASS] Scheduled notification was picked up by the sweeper and dispatched: $($scheduledFinal.status)" -ForegroundColor Green
+    $Pass++
+} else {
+    Write-Host "[FAIL] Scheduled notification still $($scheduledFinal.status) after timeout - sweeper may not be running" -ForegroundColor Red
+    $Fail++
+}
+
 Write-Host "`n=== SUMMARY ===" -ForegroundColor Cyan
 Write-Host "Passed: $Pass" -ForegroundColor Green
 Write-Host "Failed: $Fail" -ForegroundColor $(if ($Fail -eq 0) { "Green" } else { "Red" })

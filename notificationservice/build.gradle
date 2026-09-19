@@ -24,6 +24,7 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
 	
 	// FIX: Replaced flyway-core with the official Spring Boot starter [1]
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
