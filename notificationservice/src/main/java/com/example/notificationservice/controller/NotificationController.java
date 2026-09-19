@@ -5,6 +5,9 @@ import com.example.notificationservice.security.CurrentUser;
 import com.example.notificationservice.service.NotificationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+
+import java.util.List;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -27,5 +30,15 @@ public class NotificationController {
     @GetMapping("/{id}")
     public ResponseEntity<NotificationResponse> get(@PathVariable Long id) {
         return ResponseEntity.ok(notificationService.getNotification(CurrentUser.tenantId(), id));
+    }
+
+    @GetMapping
+    public ResponseEntity<List<NotificationResponse>> list() {
+        return ResponseEntity.ok(notificationService.listNotifications(CurrentUser.tenantId()));
+    }
+
+    @GetMapping("/{id}/attempts")
+    public ResponseEntity<List<DeliveryAttemptResponse>> getAttempts(@PathVariable Long id) {
+        return ResponseEntity.ok(notificationService.getAttempts(CurrentUser.tenantId(), id));
     }
 }

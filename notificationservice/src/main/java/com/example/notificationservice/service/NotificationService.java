@@ -14,8 +14,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +29,24 @@ public class NotificationService {
     private final TenantRepository tenantRepository;
     private final NotificationDispatchService dispatchService;
     private final ObjectMapper objectMapper;
+    private final DeliveryAttemptRepository deliveryAttemptRepository; 
+
+    public List<NotificationResponse> listNotifications(Long tenantId) {
+        return notificationRepository.findByTenantId(tenantId).stream()
+                .map(this::toResponse)
+                .collect(Collectors.toList());
+    }
+
+    public List<DeliveryAttemptResponse> getAttempts(Long tenantId, Long notificationId) {
+        Notification n = notificationRepository.findById(notificationId)
+                .filter(x -> x.getTenant().getId().equals(tenantId))
+                .orElseThrow(() -> new ResourceNotFoundException("Notification not found: " + notificationId));
+
+        return deliveryAttemptRepository.findByNotificationIdOrderByAttemptNumberAsc(n.getId()).stream()
+                .map(a -> new DeliveryAttemptResponse(a.getAttemptNumber(), a.getStatus(), a.getErrorMessage(),
+                        a.getAttemptedAt()))
+                .collect(Collectors.toList());
+    }
 
     @Transactional
     public NotificationResponse createNotification(Long tenantId, SendNotificationRequest request) {
