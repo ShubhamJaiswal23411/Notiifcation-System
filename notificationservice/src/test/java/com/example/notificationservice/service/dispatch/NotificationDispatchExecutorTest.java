@@ -45,7 +45,7 @@ public class NotificationDispatchExecutorTest {
     @Mock
     private TemplateRenderer templateRenderer;
     @Mock
-    private MockNotificationProvider provider;
+    private NotificationProvider provider;
 
     private NotificationDispatchExecutor executor;
 

@@ -7,10 +7,11 @@ import java.util.Random;
 
 @Component
 @Slf4j
-public class MockNotificationProvider {
+public class MockNotificationProvider implements NotificationProvider {
 
     private final Random random = new Random();
 
+    @Override
     public boolean send(ChannelType channelType, String recipient, String subject, String body) {
         log.info("Dispatching {} to {} | subject={}", channelType, recipient, subject);
         return random.nextInt(100) < 85; // ~85% simulated success rate

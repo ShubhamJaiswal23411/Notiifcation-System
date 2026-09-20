@@ -26,7 +26,7 @@ public class NotificationDispatchExecutor {
     private final RateLimiterService rateLimiterService;
     private final RetryBackoffCalculator backoffCalculator;
     private final TemplateRenderer templateRenderer;
-    private final MockNotificationProvider provider;
+    private final NotificationProvider provider;
     private final ObjectMapper objectMapper;
 
     @Transactional
