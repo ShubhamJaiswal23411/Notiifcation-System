@@ -158,53 +158,75 @@ This design deliberately avoids Kafka or any message broker — see
 
 ## Data Model / Entity Relationships
 
-```
-platform_admins                    tenants
-  id (PK)                            id (PK)
-  email (unique)                     name
-  password_hash                      api_key (unique)
-                                      status
-                                          |
-                    +---------------------+---------------------+------------------+
-                    |                     |                     |                  |
-                    v                     v                     v                  v
-              tenant_admins           channels              templates         rate_limits
-                id (PK)                 id (PK)               id (PK)           id (PK)
-                tenant_id (FK)          tenant_id (FK)         tenant_id (FK)    tenant_id (FK)
-                email                   channel_type           channel_type      channel_type
-                password_hash           config_json            name              max_per_minute
-                                        enabled                subject           max_per_day
-                                                                body
-                                                                version
-                                                                     |
-                                                                     v
-                                                              notifications
-                                                                id (PK)
-                                                                tenant_id (FK)
-                                                                channel_type
-                                                                template_id (FK)
-                                                                recipient
-                                                                variables_json
-                                                                status
-                                                                scheduled_at
-                                                                idempotency_key (unique)
-                                                                attempt_count
-                                                                next_retry_at
-                                                                version   <- optimistic lock
-                                                                     |
-                                                                     v
-                                                             delivery_attempts
-                                                               id (PK)
-                                                               notification_id (FK)
-                                                               attempt_number
-                                                               status
-                                                               error_message
-                                                               attempted_at
+### How a notification actually gets sent
+
+This is the operational flow — who does what, in what order — rather than a raw
+schema dump:
+
+```mermaid
+flowchart TD
+    subgraph Setup["One-time setup, by the Tenant Admin"]
+        TA[("👤 Tenant Admin")] -->|configures| CH["📡 Channel
+        EMAIL / SMS / PUSH / IN_APP"]
+        TA -->|writes| TM["📄 Template
+        with {{variables}}"]
+    end
+
+    subgraph Send["Sending a notification"]
+        TA -->|"POST /api/notifications
+        (channelType + templateId + recipient + variables)"| N["✉️ Notification
+        status: QUEUED"]
+        CH -.provides delivery method.-> N
+        TM -.provides content.-> N
+    end
+
+    subgraph Dispatch["Async dispatch pipeline"]
+        N --> RL{"Rate limit
+        OK?"}
+        RL -->|yes| RENDER["Render template
+        with variables"]
+        RL -->|no, deferred| RETRY1["status: FAILED
+        retry shortly"]
+        RENDER --> PROVIDER["Attempt delivery"]
+        PROVIDER -->|success| SENT["status: SENT ✅"]
+        PROVIDER -->|failure, attempts left| RETRY2["status: FAILED
+        backoff + retry"]
+        PROVIDER -->|failure, no attempts left| DEAD["status: DEAD_LETTER ⚠️"]
+        RETRY1 -. picked up by sweeper .-> RL
+        RETRY2 -. picked up by sweeper .-> RL
+    end
+
+    SENT --> R[("📬 Recipient")]
+    PROVIDER --> LOG[("🗂️ Delivery Attempt
+    recorded every time")]
+
+    style TA fill:#4C6EF5,color:#fff,stroke:#364FC7
+    style R fill:#12B886,color:#fff,stroke:#087F5B
+    style SENT fill:#12B886,color:#fff,stroke:#087F5B
+    style DEAD fill:#E03131,color:#fff,stroke:#9A0000
+    style N fill:#F59F00,color:#fff,stroke:#B37500
+    style CH fill:#845EF7,color:#fff,stroke:#5F3DC4
+    style TM fill:#845EF7,color:#fff,stroke:#5F3DC4
 ```
 
-Every tenant-owned table cascades from `tenants`; every notification-owned table
-cascades from `notifications`. `variables_json` and `config_json` are stored as
-`TEXT` (not native `jsonb`) so the schema behaves identically on both H2 and
+### Schema ownership (which tables belong to what)
+
+```
+tenants
+ ├─ tenant_admins    (one tenant admin login per email, scoped to a tenant)
+ ├─ channels         (one config per channel type, per tenant)
+ ├─ templates        (reusable content, per channel type, per tenant)
+ ├─ rate_limits      (per channel type, per tenant — set by the platform admin)
+ └─ notifications    (references a tenant AND the template used to render it)
+     └─ delivery_attempts   (one row per send attempt — the audit trail)
+
+platform_admins       (standalone — not scoped to any tenant)
+```
+
+Every tenant-owned table cascades from `tenants`. `notifications` is the one table
+with two relationships at once: it belongs to a `tenant`, and it references the
+specific `template` used to render it. `variables_json` and `config_json` are stored
+as `TEXT` (not native `jsonb`) so the schema behaves identically on both H2 and
 PostgreSQL.
 
 ---
